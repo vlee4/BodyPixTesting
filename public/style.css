@@ -19,3 +19,11 @@ form div {
   margin: 1em;
   display: inline-block;
 }
+
+#video {
+  display: none;
+}
+
+#background-video {
+  display: none;
+}
