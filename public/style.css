@@ -20,10 +20,36 @@ form div {
   display: inline-block;
 }
 
-#video {
-  display: none;
+#container {
+  display: flex;
+  flex-direction: column;
+  margin: 0px auto;
+  width: 100vw;
+  height: 100vh;
+  /* border: 10px #333 solid; */
 }
 
-#background-video {
-  display: none;
+.buttons {
+  display: flex;
+  justify-content: center;
+}
+#video {
+  /* display: inline-block; */
+  display: flex;
+  flex-grow: 1;
+  align-self: center;
+  max-width: 500;
+  max-height: 375;
+  background-color: #666;
+}
+
+#output-canvas {
+  /* display: flex; */
+  flex-grow: 1;
+  /* object-fit: contain; */
+  margin: 0px auto;
+  max-width: 500;
+  max-height: 375;
+  background-color: transparent;
+  /* border: 10px rgb(219, 60, 60) solid; */
 }

@@ -1,237 +1,188 @@
 import React from 'react'
+// import Konva from "konva";
+// import { Stage, Layer, Image, Text } from "react-konva";
 import {connect} from 'react-redux'
 const bodyPix = require('@tensorflow-models/body-pix')
+// import regeneratorRuntime from 'regenerator-runtime'
 
 class Canvas extends React.Component {
   constructor() {
     super()
     this.state = {
-      statusText: '',
-      model: '', //downloaded bodyPix machine learning model
-      capture: '', //video capture
-      segmentationEstimated: false,
-      //drawn onto a canvas
-      maskCanvas: '',
-      //the output canvas
-      canvas: '',
-      video: '',
-      videoPlaying: '',
-
-      videoWidth: '',
-      videoHeight: '',
-
-      backgroundVideo: '',
-      existingMask: ''
-      // maskImage: "", //most recent mask image generated from estimating person segmentation on video
-      // maskBackgroundButton: "",
+      _isMounted: false
     }
-
-    this.loadWebcamCapture = this.loadWebcamCapture.bind(this)
-    this.loadImage = this.loadImage.bind(this)
-    this.setup = this.setup.bind(this)
-    this.loadModelAndStartEstimating = this.loadModelAndStartEstimating.bind(
-      this
-    )
-    this.startDrawLoop = this.startDrawLoop.bind(this)
-    this.draw = this.draw.bind(this)
-    this.startEstimationLoop = this.startEstimationLoop.bind(this)
-    this.estimateFrame = this.estimateFrame.bind(this)
-    this.performEstimation = this.performEstimation.bind(this)
-    this.setStatusText = this.setStatusText.bind(this)
+    this.startCam = this.startCam.bind(this)
+    this.stopCam = this.stopCam.bind(this)
+    this.segmentAndMask = this.segmentAndMask.bind(this)
+    this.continuouslySegmentAndMask = this.continuouslySegmentAndMask.bind(this)
   }
 
   componentDidMount() {
-    this.setup()
-  }
-  //////////// Utility Functions/////////////////
-  async loadWebcamCapture() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error(
-        'Browser API navigator.mediaDevices.getUserMedia not available'
-      )
-    }
-
-    const videoElement = document.getElementById('video')
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: true
-    })
-    videoElement.srcObject = stream
-
-    return new Promise(resolve => {
-      videoElement.onloadedmetadata = () => {
-        videoElement.width = videoElement.videoWidth
-        videoElement.height = videoElement.videoHeight
-        resolve(videoElement)
-      }
-    })
-  }
-
-  async loadImage(imagePath) {
-    const image = new Image()
-    const promise = new Promise((resolve, reject) => {
-      image.crossOrigin = ''
-      image.onload = () => {
-        resolve(image)
-      }
-    })
-
-    image.src = imagePath
-    return promise
-  }
-  ///////////////////////
-  // setup function run when document loads
-  async setup() {
-    let {capture, backgroundVideo, canvas, maskCanvas} = this.state
-    // capture from the webcam
-    capture = await this.loadWebcamCapture('user')
-    capture.play()
-
-    backgroundVideo = document.getElementById('background-video')
-
-    let theCanvas = document.getElementById('canvas')
-    theCanvas.width = capture.width
-    theCanvas.height = capture.height
-
-    let theMaskCanvas = document.createElement('canvas')
-
     this.setState({
-      canvas: theCanvas,
-      maskCanvas: theMaskCanvas
+      _isMounted: true
     })
-
-    this.loadModelAndStartEstimating()
-
-    this.startDrawLoop()
   }
 
-  startDrawLoop() {
-    this.draw()
-
-    document.getElementById('background-video').play()
+  componentWillUnmount() {
+    this.setState({
+      _isMounted: false
+    })
   }
 
-  async draw() {
-    let {capture, canvas, segmentationEstimated, existingMask} = this.state
-    const flipHorizontal = true
-    // how much to blur the mask background by.  This affects the softness of the edge.
-    const maskBlurAmount = 3
-    // let canvas = this.state.canvas;
-    const ctx = canvas.getContext('2d')
-    // make sure video is loaded, and a mask has been estimated from the video.  The mask
-    // continuously gets updated in the loop estimateFrame below, which is independent
-    // from the draw loop
-    if (capture && segmentationEstimated) {
-      const maskedFrame = tf.tidy(() => {
-        const image = tf.browser.fromPixels(capture)
+  startCam() {
+    var video = document.getElementById('video')
+    if (navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({video: true})
+        .then(function(stream) {
+          video.srcObject = stream
+        })
+        .catch(function(error) {
+          console.log('Something went wrong!', error)
+        })
+    }
+  }
+  stopCam() {
+    var video = document.getElementById('video')
+    var stream = video.srcObject
+    var tracks = stream.getTracks()
+    for (var i = 0; i < tracks.length; i++) {
+      var track = tracks[i]
+      track.stop()
+    }
+    video.srcObject = null
+  }
 
-        if (existingMask) {
-          return image // image.matMul(image, existingMask);
+  async segmentAndMask() {
+    let video, canvasOut, canvasOutContext, canvasTemp, canvasTempContext, model
+    const bodyPixConfig = {
+      architechture: 'MobileNetV1',
+      outputStride: 16,
+      multiplier: 1,
+      quantBytes: 4
+    }
+    const segmentationConfig = {
+      internalResolution: 'high',
+      segmentationThreshold: 0.05,
+      scoreThreshold: 0.05
+    }
+    function init() {
+      video = document.getElementById('video')
+      //set ouput canvas
+      canvasOut = document.getElementById('output-canvas')
+      canvasOut.setAttribute('width', video.videoWidth)
+      canvasOut.setAttribute('height', video.videoHeight)
+      canvasOutContext = canvasOut.getContext('2d') //get context of output canvas
+      //Create canvas
+      canvasTemp = document.createElement('canvas')
+      canvasTemp.setAttribute('width', video.videoWidth)
+      canvasTemp.setAttribute('height', video.videoHeight)
+      canvasTempContext = canvasTemp.getContext('2d') //get context of canvas
+      video.play()
+      computeFrame()
+    }
+    function computeFrame() {
+      //drawImage(image, dx, dy, dWidth, dHeight, )
+      //image: element to draw into the canvas context
+      //dx: x coordinate where to place top left corner of source image in the destination canvas
+      //dWidth: width to draw the image in the destination canvas: allowing for scaling; default: won't scale image
+
+      //Draws the video into the intial canvas
+      canvasTempContext.drawImage(
+        video,
+        0,
+        0,
+        video.videoWidth,
+        video.videoHeight
+      )
+      //getImageData returns the imageData for the part of the inital canvas that is specified (ie. the whole canvas)
+      let frame = canvasTempContext.getImageData(
+        0,
+        0,
+        video.videoWidth,
+        video.videoHeight
+      )
+      //same as when we do net.segmentPerson
+      //they pass in the canvas with the video drawn into it
+      //then they get the imageData for the blank output canvas
+      model.segmentPerson(canvasTemp, segmentationConfig).then(segmentation => {
+        canvasOutContext.clearRect(0, 0, canvasOut.width, canvasOut.height)
+        let OutImage = canvasOutContext.getImageData(
+          0,
+          0,
+          video.videoWidth,
+          video.videoHeight
+        )
+        //ctx.getImageData(sx, sy, sw, sh)
+        //sx: x-coordinate of from top-left corner from which ImageData will be extracted
+        //sw: width or rectangle from which Image Data will be extrated
+        for (let x = 0; x < video.videoWidth; x++) {
+          for (let y = 0; y < video.videoHeight; y++) {
+            //n = each pixel
+            let n = x + y * video.videoWidth
+            //checks to see if ImageData = 1, which denotes the pixels of the person
+            if (segmentation.data[n] == 1) {
+              OutImage.data[n * 4] = frame.data[n * 4] //R
+              OutImage.data[n * 4 + 1] = frame.data[n * 4 + 1] //G
+              OutImage.data[n * 4 + 2] = frame.data[n * 4 + 2] //B
+              OutImage.data[n * 4 + 3] = frame.data[n * 4 + 3] //A
+            }
+          }
         }
 
-        return image
+        //putImageData(imageData, dx, dy)
+        //imageData: ImageData obj with array of pixel values
+        //dx: x-coordinate where to put the imagedata in the destination canvas; destination canvas being: canvasOutContext
+        canvasOutContext.putImageData(OutImage, 0, 0)
+        setTimeout(computeFrame, 0)
       })
-
-      await tf.browser.toPixels(maskedFrame, capture)
-
-      maskedFrame.dispose()
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-      ctx.save()
-
-      if (flipHorizontal) {
-        // flip the drawing of the results horizontally
-        ctx.scale(-1, 1)
-        ctx.translate(-canvas.width, 0)
-      }
-
-      // blur the mask and draw it onto the canvas
-      ctx.filter = `blur(${maskBlurAmount}px)`
-      ctx.drawImage(maskCanvas, 0, 0)
-      ctx.filter = 'blur(0px)'
-
-      // draw the background video on the canvas using the compositing operation 'source-in.'
-      // "The new shape is drawn only where both the new shape and the destination canvas overlap. Everything else is made transparent."
-      // see all possible compositing operations at https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API/Tutorial/Compositing
-      ctx.globalCompositeOperation = 'source-in'
-      ctx.drawImage(this.backgroundVideo, 0, 0, canvas.width, canvas.height)
-
-      // draw camera feed frame onto the canvas using the compositing operation 'destination-over.'
-      // "New shapes are drawn behind the existing canvas content."
-      ctx.globalCompositeOperation = 'destination-over'
-      ctx.drawImage(capture, 0, 0)
-
-      ctx.restore()
     }
 
-    requestAnimationFrame(this.draw)
+    bodyPix.load(bodyPixConfig).then(m => {
+      //load will return bodyPix instance w/ provided bodyPixConfiguration
+      model = m
+      init()
+    })
   }
-
-  async loadModelAndStartEstimating() {
-    let {model} = this.state
-    this.setStatusText('downloading the machine learning model...')
-    let theModel = await bodyPix.load()
-    this.setState({model: theModel})
-
-    this.setStatusText('')
-
-    // start the estimation loop, separately from the drawing loop.
-    // This allows drawing to happen at a high number of frames per
-    // second, independent from the speed of estimation.
-    this.startEstimationLoop()
-  }
-
-  startEstimationLoop() {
-    this.estimateFrame()
-  }
-
-  async estimateFrame() {
-    let {capture} = this.state
-    if (capture) {
-      await this.performEstimation()
+  continuouslySegmentAndMask() {
+    //continuously renders next frame of video
+    var video = document.getElementById('video')
+    if (video.srcObject && this.state._isMounted) {
+      requestAnimationFrame(() => {
+        console.log('this', this)
+        this.segmentAndMask()
+      })
     }
-
-    // at the end of estimating, start again after the current frame is complete.
-    requestAnimationFrame(this.estimateFrame)
-  }
-  async performEstimation() {
-    let {capture, existingMask} = this.state
-    const newMask = await model.segmentPerson(capture)
-
-    this.setState({existingMask: newMask})
-    // existingMask = newMask
-
-    this.setState({segmentationEstimated: true})
-  }
-
-  setStatusText(text) {
-    const statusElement = document.getElementById('status')
-    if (text) {
-      statusElement.style.display = 'block'
-      statusElement.innerText = text
-    } else statusElement.style.display = 'none'
+    //if cam is running then continue this function if not, then stop this function
+    //Also, check if component is mounted first before running this fn
   }
 
   render() {
+    // let video = document.getElementById('video')
+    if (!navigator.mediaDevices.getUserMedia) {
+      return <h2>Loading...</h2>
+    }
     return (
       <div>
-        <h2>BodyPix testing in session</h2>
-        <p id="status" />
-        <canvas id="canvas" />
-        <video id="video" playsInline />
-
-        <video id="background-video" playsInline loop autoPlay>
-          <source
-            src="https://cdn.glitch.com/df9e423d-65e8-438e-8860-b1fed0f1040f%2Fliquid.mp4?1550622383996"
-            type="video/mp4"
-          />
-          <p>Your browser doesn't support HTML5 video.</p>
-        </video>
+        <div id="container">
+          <video autoPlay={true} id="video" />
+          <div className="buttons">
+            <button type="button" onClick={this.startCam}>
+              START
+            </button>
+            <button type="button" onClick={this.stopCam}>
+              STOP
+            </button>
+            <button type="button" onClick={this.segmentAndMask}>
+              SEGMENT
+            </button>
+          </div>
+          <hr />
+          {/* OUTPUT CANVAS */}
+          <canvas id="output-canvas" height="375" width="500" />
+        </div>
       </div>
     )
   }
 }
-
 export default connect()(Canvas)
